@@ -67,6 +67,10 @@ public class OaiPmhParams extends AbstractParams {
     //---------------------------------------------------------------------------
     private ArrayList<Search> alSearches = new ArrayList<Search>();
 
+
+    public boolean useListRecords;
+
+
     //---------------------------------------------------------------------------
     //---
     //--- Other API methods
@@ -89,6 +93,8 @@ public class OaiPmhParams extends AbstractParams {
         icon = Util.getParam(site, "icon", "");
         xslfilter = Util.getParam(site, "xslfilter", "");
 
+        useListRecords = Util.getParam(site, "useListRecords", true);
+
         addSearches(searches);
     }
 
@@ -103,6 +109,8 @@ public class OaiPmhParams extends AbstractParams {
         url = Util.getParam(site, "url", url);
         icon = Util.getParam(site, "icon", icon);
         xslfilter = Util.getParam(site, "xslfilter", "");
+
+        useListRecords = Util.getParam(site, "useListRecords", true);
 
         //--- if some search queries are given, we drop the previous ones and
         //--- set these new ones
@@ -138,6 +146,8 @@ public class OaiPmhParams extends AbstractParams {
         copy.url = url;
         copy.icon = icon;
         copy.xslfilter = xslfilter;
+
+        copy.useListRecords = useListRecords;
 
         copy.setValidate(getValidate());
 

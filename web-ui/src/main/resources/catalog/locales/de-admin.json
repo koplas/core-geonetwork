@@ -509,6 +509,8 @@
     "oaipmh-FailedToGetSetsAndPrefix": "Abfrage von Sets und Präfixes fehlgeschlagen. Bitte die Server-URL überprüfen",
     "oaipmh-url": "URL",
     "oaipmh-urlHelp": "Die OAI/PMH Server-URL",
+    "oaipmh-useListRecords": "Metadaten mit der Methode ListRecords abrufen",
+    "oaipmh-useListRecordsHelp": "Wenn ausgewählt, verwendet der Harvester die OAI-PMH ListRecords-Methode, um die Datensätze abzurufen, andernfalls verwendet er ListIdentifiers / GetRecord. Letzteres erfordert mehr Anfragen, aber einige Server geben den Metadateninhaltsvorgang nicht in der ListRecords-Antwort zurück.",
     "ogcwxs-datasetTemplateUuid": "Erstellen Sie Datenset-Metadatensätze aus einer Vorlage",
     "ogcwxs-datasetTemplateUuidHelp": "Wählen Sie eine Vorlage aus, die als Grundlage für das Einfügen von GetCapabilities-Informationen verwendet werden soll. In diesem Modus werden die beim ersten Start erstellten Datensätze wiederverwendet und aktualisiert. Dadurch können diese Datensätze bearbeitet werden.",
     "ogcwxs-serviceTemplateUuid": "Erstellen Sie einen Service-Metadatensatz aus einer Vorlage",

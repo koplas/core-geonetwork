@@ -25,63 +25,35 @@ package org.fao.geonet.kernel.harvest.harvester.oaipmh;
 
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.apache.commons.lang.StringUtils;
 import org.eclipse.emf.common.command.AbortExecutionException;
-import org.fao.geonet.GeonetContext;
 import org.fao.geonet.Logger;
 import org.fao.geonet.Util;
 import org.fao.geonet.constants.Geonet;
-import org.fao.geonet.domain.AbstractMetadata;
 import org.fao.geonet.domain.ISODate;
-import org.fao.geonet.domain.Metadata;
-import org.fao.geonet.domain.MetadataType;
-import org.fao.geonet.domain.Pair;
 import org.fao.geonet.exceptions.OperationAbortedEx;
-import org.fao.geonet.kernel.DataManager;
-import org.fao.geonet.kernel.UpdateDatestamp;
-import org.fao.geonet.kernel.datamanager.IMetadataIndexer;
-import org.fao.geonet.kernel.datamanager.IMetadataManager;
-import org.fao.geonet.kernel.datamanager.IMetadataUtils;
 import org.fao.geonet.kernel.harvest.BaseAligner;
-import org.fao.geonet.kernel.harvest.harvester.CategoryMapper;
-import org.fao.geonet.kernel.harvest.harvester.GroupMapper;
 import org.fao.geonet.kernel.harvest.harvester.HarvestError;
 import org.fao.geonet.kernel.harvest.harvester.HarvestResult;
-import org.fao.geonet.kernel.harvest.harvester.HarvesterUtil;
 import org.fao.geonet.kernel.harvest.harvester.IHarvester;
-import org.fao.geonet.kernel.harvest.harvester.UUIDMapper;
-import org.fao.geonet.kernel.search.IndexingMode;
 import org.fao.geonet.lib.Lib;
-import org.fao.geonet.repository.MetadataValidationRepository;
-import org.fao.geonet.repository.OperationAllowedRepository;
-import org.fao.geonet.repository.Updater;
-import org.fao.geonet.repository.specification.MetadataValidationSpecs;
 import org.fao.geonet.utils.GeonetHttpRequestFactory;
-import org.fao.geonet.utils.Xml;
 import org.fao.geonet.utils.XmlRequest;
-import org.fao.oaipmh.OaiPmh;
 import org.fao.oaipmh.exceptions.NoRecordsMatchException;
-import org.fao.oaipmh.requests.GetRecordRequest;
 import org.fao.oaipmh.requests.ListIdentifiersRequest;
-import org.fao.oaipmh.responses.GetRecordResponse;
+import org.fao.oaipmh.requests.ListRecordsRequest;
+import org.fao.oaipmh.requests.ListRequest;
 import org.fao.oaipmh.responses.Header;
 import org.fao.oaipmh.responses.ListIdentifiersResponse;
-import org.jdom.Element;
-import org.jdom.JDOMException;
+import org.fao.oaipmh.responses.ListRecordsResponse;
+import org.fao.oaipmh.responses.Record;
 
 import jeeves.server.context.ServiceContext;
-
-import javax.annotation.Nonnull;
 
 //=============================================================================
 
@@ -90,13 +62,6 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
     private HarvestResult result;
     private Logger log;
     private ServiceContext context;
-    private DataManager dataMan;
-    private IMetadataManager metadataManager;
-    private IMetadataIndexer metadataIndexer;
-    private IMetadataUtils metadataUtils;
-    private CategoryMapper localCateg;
-    private GroupMapper localGroups;
-    private UUIDMapper localUuids;
 
     /**
      * Contains a list of accumulated errors during the executing of this harvest.
@@ -111,12 +76,6 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
         this.errors = errors;
 
         result = new HarvestResult();
-
-        GeonetContext gc = (GeonetContext) context.getHandlerContext(Geonet.CONTEXT_NAME);
-        dataMan = gc.getBean(DataManager.class);
-        metadataManager = gc.getBean(IMetadataManager.class);
-        metadataIndexer = gc.getBean(IMetadataIndexer.class);
-        metadataUtils = gc.getBean(IMetadataUtils.class);
     }
 
     //--------------------------------------------------------------------------
@@ -129,7 +88,14 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
 
         this.log = log;
 
-        ListIdentifiersRequest req = new ListIdentifiersRequest(context.getBean(GeonetHttpRequestFactory.class));
+        ListRequest req;
+
+        if (params.useListRecords) {
+            req = new ListRecordsRequest(context.getBean(GeonetHttpRequestFactory.class));
+        } else {
+            req = new ListIdentifiersRequest(context.getBean(GeonetHttpRequestFactory.class));
+        }
+
         req.setSchemaPath(context.getAppPath().resolve(Geonet.SchemaPath.OAI_PMH));
 
         XmlRequest t = req.getTransport();
@@ -152,6 +118,7 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
         //--- perform all searches
 
         Set<RecordInfo> records = new HashSet<>();
+        Set<String> uuids = new HashSet<>();
 
         boolean error = false;
         for (Search s : params.getSearches()) {
@@ -161,7 +128,14 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
             }
 
             try {
-                records.addAll(search(req, s));
+                if (params.useListRecords) {
+                    AlignerListRecords aligner = new AlignerListRecords(cancelMonitor, context, params, log);
+                    searchAndAlign((ListRecordsRequest) req, t, aligner, s, uuids);
+                    result = aligner.cleanupRemovedRecords(uuids);
+                } else {
+                    records = search((ListIdentifiersRequest) req, s);
+                }
+
             } catch (Exception e) {
                 error = true;
                 log.error("Unknown error trying to harvest");
@@ -180,7 +154,15 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
         if (params.isSearchEmpty()) {
             try {
                 log.debug("Doing an empty search");
-                records.addAll(search(req, Search.createEmptySearch()));
+
+                if (params.useListRecords) {
+                    AlignerListRecords aligner = new AlignerListRecords(cancelMonitor, context, params, log);
+                    searchAndAlign((ListRecordsRequest) req, t, aligner, Search.createEmptySearch(), uuids);
+                    result = aligner.cleanupRemovedRecords(uuids);
+                } else {
+                    search((ListIdentifiersRequest) req, Search.createEmptySearch());
+                }
+
             } catch (Exception e) {
                 error = true;
                 log.error("Unknown error trying to harvest");
@@ -196,13 +178,17 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
             }
         }
 
-        log.info("Total records processed in all searches :" + records.size());
+        log.info("Total records processed in all searches :" + uuids.size());
 
-        //--- align local node
-        if (!error) {
-            align(t, records);
-        } else {
-            log.warning("Due to previous errors the align process has not been called");
+        if (!params.useListRecords) {
+            //--- align local node
+            if (!error) {
+                AlignerListIdentifiers aligner = new AlignerListIdentifiers(cancelMonitor, context, params, log);
+
+                result = aligner.align(t, records, errors);
+            } else {
+                log.warning("Due to previous errors the align process has not been called");
+            }
         }
         return result;
     }
@@ -210,13 +196,13 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
     private Set<RecordInfo> search(ListIdentifiersRequest req, Search s) throws OperationAbortedEx {
         //--- setup search parameters
 
-        if (s.from.length() != 0) req.setFrom(new ISODate(s.from));
+        if (!s.from.isEmpty()) req.setFrom(new ISODate(s.from));
         else req.setFrom(null);
 
-        if (s.until.length() != 0) req.setUntil(new ISODate(s.until));
+        if (!s.until.isEmpty()) req.setUntil(new ISODate(s.until));
         else req.setUntil(null);
 
-        if (s.set.length() != 0) req.setSet(s.set);
+        if (!s.set.isEmpty()) req.setSet(s.set);
         else req.setSet(null);
 
         req.setMetadataPrefix(s.prefix);
@@ -256,370 +242,67 @@ class Harvester extends BaseAligner<OaiPmhParams> implements IHarvester<HarvestR
         }
     }
 
-    private void align(XmlRequest t, Set<RecordInfo> records) throws Exception {
+    private void searchAndAlign(ListRecordsRequest req, XmlRequest t, AlignerListRecords aligner, Search s, Set<String> uuids) {
         log.info("Start of alignment for : " + params.getName());
 
-        //-----------------------------------------------------------------------
-        //--- retrieve all local categories and groups
-        //--- retrieve harvested uuids for given harvesting node
+        //--- setup search parameters
+        if (!s.from.isEmpty()) req.setFrom(new ISODate(s.from));
+        else req.setFrom(null);
 
-        localCateg = new CategoryMapper(context);
-        localGroups = new GroupMapper(context);
-        localUuids = new UUIDMapper(context.getBean(IMetadataUtils.class), params.getUuid());
+        if (!s.until.isEmpty()) req.setUntil(new ISODate(s.until));
+        else req.setUntil(null);
 
-        Pair<String, Map<String, Object>> filter = HarvesterUtil.parseXSLFilter(params.xslfilter);
-        String processName = filter.one();
-        Map<String, Object> processParams = filter.two();
+        if (!s.set.isEmpty()) req.setSet(s.set);
+        else req.setSet(null);
 
-        dataMan.flush();
+        req.setMetadataPrefix(s.prefix);
 
-        //-----------------------------------------------------------------------
-        //--- remove old metadata
+        //--- execute request and loop on response
 
-        for (String uuid : localUuids.getUUIDs()) {
+        Set<RecordInfo> records = new HashSet<>();
 
-            if (cancelMonitor.get()) {
-                return;
-            }
-
-            if (!exists(records, uuid)) {
-                String id = localUuids.getID(uuid);
-
-                if (log.isDebugEnabled())
-                    log.debug("  - Removing old metadata with local id:" + id);
-                metadataManager.deleteMetadataGroup(context, id);
-
-                metadataManager.flush();
-
-                result.locallyRemoved++;
-            }
-        }
-        //-----------------------------------------------------------------------
-        //--- insert/update new metadata
-
-        for (RecordInfo ri : records) {
-
-            if (cancelMonitor.get()) {
-                return;
-            }
-
-            try {
-                String databaseId = metadataUtils.getMetadataId(ri.id);
-                if (databaseId == null) {
-                    // record doesn't exist (so it doesn't belong to this harvester)
-                    log.debug(String.format("Adding record with id %s", ri.id));
-                    processParams.put("mdChangeDate", ri.changeDate);
-                    addMetadata(t, ri, processName, processParams);
-                } else if (localUuids.getID(ri.id) == null) {
-                    // Record with such uuid already exists in the database but doesn't belong to this harvester
-                    result.datasetUuidExist++;
-
-                    switch (params.getOverrideUuid()) {
-                        case OVERRIDE:
-                            processParams.put("mdChangeDate", ri.changeDate);
-                            updateMetadata(t, ri, Integer.toString(metadataUtils.findOneByUuid(ri.id).getId()),
-                                processName, processParams, true);
-                            result.updatedMetadata++;
-                            break;
-                        case RANDOM:
-                            if (log.isDebugEnabled()) {
-                                log.debug(String.format("Generating random uuid for remote record with uuid %s", ri.id));
-                            }
-                            String newRandomUuid = UUID.randomUUID().toString();
-                            processParams.put("mdChangeDate", ri.changeDate);
-                            addMetadata(t, ri, processName, processParams, newRandomUuid);
-                            break;
-                        case SKIP:
-                            log.debug("Skipping record with uuid " + ri.id);
-                            result.uuidSkipped++;
-                            break;
-                        default:
-                            //nothing
-                    }
-                } else {
-                    //record exists and belongs to this harvester
-                    String id = localUuids.getID(ri.id);
-                    processParams.put("mdChangeDate", ri.changeDate);
-                    updateMetadata(t, ri, id, processName, processParams, false);
-                }
-                result.totalMetadata++;
-            } catch (Throwable tr) {
-                errors.add(new HarvestError(this.context, tr));
-                log.error("Unable to process record from OAI (" + this.params.getName() + ")");
-                log.error("   Record failed: " + ri.id + ". Error is: " + tr.getMessage());
-                log.error(tr);
-            } finally {
-                result.originalMetadata++;
-
-            }
-        }
-
-        dataMan.forceIndexChanges();
-        log.info("End of alignment for : " + params.getName());
-    }
-
-    /**
-     * Return true if the uuid is present in the remote records
-     */
-
-    private boolean exists(Set<RecordInfo> records, String uuid) {
-        for (RecordInfo ri : records)
-            if (uuid.equals(ri.id))
-                return true;
-
-        return false;
-    }
-
-    private void addMetadata(XmlRequest t, RecordInfo ri, String processName, Map<String, Object> processParams) throws Exception {
-        addMetadata(t, ri, processName, processParams, null);
-    }
-
-    private void addMetadata(XmlRequest t, RecordInfo ri, String processName, Map<String, Object> processParams, String newUuid) throws Exception {
-        Element md = retrieveMetadata(t, ri);
-
-        if (md == null)
-            return;
-
-        //--- schema handled check already done
-
-        String schema = dataMan.autodetectSchema(md);
-
-        if (log.isDebugEnabled()) {
-            log.debug("  - Adding metadata with remote id : " + ri.id);
-        }
-
-
-        // Apply the xsl filter chosen by UI
-        if (StringUtils.isNotEmpty(params.xslfilter)) {
-            md = HarvesterUtil.processMetadata(dataMan.getSchema(schema),
-                md, processName, processParams);
-
-            schema = dataMan.autodetectSchema(md);
-        }
-
-        // Translate metadata
-        if (params.isTranslateContent()) {
-            md = translateMetadataContent(context, md, schema);
-        }
-
-        //
-        // insert metadata
-        //
-        AbstractMetadata metadata = new Metadata();
-        if (newUuid != null) {
-            metadata.setUuid(newUuid);
-            md = metadataUtils.setUUID(schema, newUuid, md);
-        } else {
-            metadata.setUuid(ri.id);
-        }
-        metadata.getDataInfo().
-            setSchemaId(schema).
-            setRoot(md.getQualifiedName()).
-            setType(MetadataType.METADATA).
-            setChangeDate(ri.changeDate).
-            setCreateDate(ri.changeDate);
-        metadata.getSourceInfo().
-            setSourceId(params.getUuid()).
-            setOwner(getOwner());
-        metadata.getHarvestInfo().
-            setHarvested(true).
-            setUuid(params.getUuid());
+        log.info("Searching on : " + params.getName());
 
         try {
-            metadata.getSourceInfo().setGroupOwner(Integer.valueOf(params.getOwnerIdGroup()));
-        } catch (NumberFormatException e) {
-        }
+            ListRecordsResponse response = req.execute();
 
-        addCategories(metadata, params.getCategories(), localCateg, context, null, false);
+            int i = 0;
 
-        metadata = metadataManager.insertMetadata(context, metadata, md, IndexingMode.none, false, UpdateDatestamp.NO, false, false);
-
-        String id = String.valueOf(metadata.getId());
-
-        addPrivileges(id, params.getPrivileges(), localGroups, context);
-
-        metadataManager.flush();
-
-        dataMan.indexMetadata(id, Math.random() < 0.01);
-        result.addedMetadata++;
-    }
-
-    private Element retrieveMetadata(XmlRequest transport, RecordInfo ri) {
-        try {
-            if (log.isDebugEnabled()) log.debug("  - Getting remote metadata with id : " + ri.id);
-
-            GetRecordRequest req = new GetRecordRequest(transport);
-            req.setSchemaPath(context.getAppPath().resolve(Geonet.SchemaPath.OAI_PMH));
-
-            req.setIdentifier(ri.id);
-            req.setMetadataPrefix(ri.prefix);
-
-            GetRecordResponse res = req.execute();
-
-            Element md = res.getRecord().getMetadata();
-
-            if (log.isDebugEnabled()) log.debug("    - Record got:\n" + Xml.getString(md));
-
-            if (isOaiDc(md)) {
-                if (log.isDebugEnabled()) log.debug("    - Converting oai_dc to dublin core");
-                md = toDublinCore(md);
-
-                if (md == null)
-                    return null;
-            }
-
-            String schema = dataMan.autodetectSchema(md, null);
-
-            if (schema == null) {
-                log.warning("Skipping metadata with unknown schema. Remote id : " + ri.id);
-                result.unknownSchema++;
-            } else {
-
-                try {
-                    Integer groupIdVal = null;
-                    if (StringUtils.isNotEmpty(params.getOwnerIdGroup())) {
-                        groupIdVal = getGroupOwner();
-                    }
-
-                    params.getValidate().validate(dataMan, context, md, groupIdVal);
-                    return (Element) md.detach();
-                } catch (Exception e) {
-                    log.info("Skipping metadata that does not validate. Remote id : " + ri.id);
-                    result.doesNotValidate++;
+            while (response.hasNext()) {
+                if (cancelMonitor.get()) {
+                    return;
                 }
-        }
-    }
 
-    catch(JDOMException e) {
-            HarvestError harvestError = new HarvestError(context, e);
-            harvestError.setDescription("Skipping metadata with bad XML format. Remote id : "+ ri.id);
-            harvestError.printLog();
-            this.errors.add(harvestError);
-            result.badFormat++;
-    }
+                Record record = response.next();
 
-    catch(Exception e)
-    {
-            HarvestError harvestError = new HarvestError(context, e);
-            harvestError.setDescription(String.format(
-                "Raised exception while getting metadata file %s. Error is: %s",
-                ri.id, e.getMessage()));
-            this.errors.add(harvestError);
-            harvestError.printLog();
-            result.unretrievable++;
-    }
+                Header h = record.getHeader();
 
-        //--- we don't raise any exception here. Just try to go on
-        return null;
-    }
+                if (!h.isDeleted()) {
+                    i++;
+                    records.add(new RecordInfo(record, s.prefix));
+                    uuids.add(h.getIdentifier());
+                }
 
-    private boolean isOaiDc(Element md) {
-        return (md.getName().equals("dc")) && (md.getNamespace().equals(OaiPmh.Namespaces.OAI_DC));
-    }
-
-    private Element toDublinCore(Element md) {
-        Path styleSheet = context.getAppPath().resolve(Geonet.Path.STYLESHEETS).resolve("conversion/oai_dc-to-dublin-core/main.xsl");
-
-        try
-        {
-            return Xml.transform(md, styleSheet);
-        }
-        catch (Exception e)
-        {
-            HarvestError harvestError = new HarvestError(context, e);
-            harvestError.setDescription("Cannot convert oai_dc to dublin core : "+ e);
-            this.errors.add(harvestError);
-            harvestError.printLog();
-            return null;
-        }
-    }
-
-    private void updateMetadata(XmlRequest t, RecordInfo ri, String id, String processName, Map<String, Object> processParams, boolean force) throws Exception {
-        String date = localUuids.getChangeDate(ri.id);
-
-        if (!force && !ri.isMoreRecentThan(date)) {
-            if (log.isDebugEnabled()) {
-                log.debug("  - Metadata XML not changed for remote id : " + ri.id);
-            }
-            result.unchangedMetadata++;
-        } else {
-            if (log.isDebugEnabled()) {
-                log.debug("  - Updating local metadata for remote id : " + ri.id);
+                if (i == 100) {
+                    aligner.align(t, records, errors);
+                    records = new HashSet<>();
+                    i = 0;
+                }
             }
 
-            Element md = retrieveMetadata(t, ri);
-
-            if (md == null) {
-                result.unchangedMetadata++;
-                return;
+            if (i > 0) {
+                aligner.align(t, records, errors);
             }
 
-            // The schema of the metadata
-            String schema = dataMan.autodetectSchema(md, null);
-            boolean updateSchema = false;
-
-            // Apply the xsl filter chosen by UI
-            if (StringUtils.isNotEmpty(params.xslfilter)) {
-                md = HarvesterUtil.processMetadata(dataMan.getSchema(schema),
-                    md, processName, processParams);
-
-                schema = dataMan.autodetectSchema(md);
-                updateSchema = true;
-            }
-
-            // Translate metadata
-            if (params.isTranslateContent()) {
-                md = translateMetadataContent(context, md, schema);
-            }
-
-            //
-            // update metadata
-            //
-            boolean validate = false;
-            boolean ufo = false;
-            String language = context.getLanguage();
-
-
-            if (updateSchema) {
-                MetadataValidationRepository metadataValidationRepository =
-                    context.getBean(MetadataValidationRepository.class);
-
-                final String newSchema = schema;
-                metadataManager.update(Integer.parseInt(id), new Updater<AbstractMetadata>() {
-                    @Override
-                    public void apply(@Nonnull AbstractMetadata entity) {
-                        entity.getDataInfo().setSchemaId(newSchema);
-                    }
-                });
-
-                metadataValidationRepository.deleteAll(MetadataValidationSpecs.hasMetadataId(Integer.parseInt(id)));
-            }
-
-            final AbstractMetadata metadata = metadataManager.updateMetadata(context, id, md, validate, ufo, language, ri.changeDate.toString(),
-                true, IndexingMode.none);
-            if (force) {
-                //change ownership of metadata to new harvester
-                metadata.getHarvestInfo().setUuid(params.getUuid());
-                metadata.getSourceInfo().setSourceId(params.getUuid());
-
-                metadataManager.save(metadata);
-            }
-
-            //--- the administrator could change privileges and categories using the
-            //--- web interface so we have to re-set both
-
-            OperationAllowedRepository repository = context.getBean(OperationAllowedRepository.class);
-            repository.deleteAllByMetadataId(Integer.parseInt(id));
-            addPrivileges(id, params.getPrivileges(), localGroups, context);
-
-            metadata.getCategories().clear();
-            addCategories(metadata, params.getCategories(), localCateg, context, null, true);
-
-            metadataManager.flush();
-            dataMan.indexMetadata(id, Math.random() < 0.01);
-            result.updatedMetadata++;
-            metadataIndexer.indexMetadata(id, true, IndexingMode.full);
-            result.updatedMetadata++;
+            log.info("End of alignment for : " + params.getName());
+        } catch (NoRecordsMatchException e) {
+            log.warning("No records were matched: " + e.getMessage());
+            this.errors.add(new HarvestError(context, e));
+        } catch (Exception e) {
+            log.warning("Raised exception when searching : " + e);
+            log.warning(Util.getStackTrace(e));
+            this.errors.add(new HarvestError(context, e));
+            throw new OperationAbortedEx("Raised exception when searching", e);
         }
     }
 }

@@ -55,6 +55,8 @@ public class OaiPmhHarvester extends AbstractHarvester<HarvestResult, OaiPmhPara
         harvesterSettingsManager.add("id:" + siteId, "icon", params.icon);
         harvesterSettingsManager.add("id:" + siteId, "xslfilter", params.xslfilter);
 
+        harvesterSettingsManager.add("id:" + siteId, "useListRecords", params.useListRecords);
+
         harvesterSettingsManager.add("id:" + optionsId, "validate", params.getValidate());
 
         //--- store search nodes

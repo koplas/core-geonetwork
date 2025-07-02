@@ -48,6 +48,16 @@
       data-gn-harvester-account="harvesterSelected"
     ></div>
 
+    <div id="gn-harvest-settings-oai-basic-retrievemethod-row">
+      <label class="control-label">
+        <input id="gn-harvest-settings--oai-basic-retrievemethod-checkbox"
+               type="checkbox"
+               data-ng-model="harvesterSelected.site.useListRecords"/>
+        <span id="gn-harvest-settings-csw-advanced-duplicate-label" data-translate="">oaipmh-useListRecords</span>
+      </label>
+      <p class="help-block" data-translate="">oaipmh-useListRecordsHelp</p>
+    </div>
+
     <fieldset id="gn-harvest-settings-oai-basic-filter-row" class="form-horizontal">
       <legend id="gn-harvest-settings-oai-basic-filter-title" data-translate="">
         harvesterFilter

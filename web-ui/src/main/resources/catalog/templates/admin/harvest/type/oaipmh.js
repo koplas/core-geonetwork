@@ -18,7 +18,8 @@ var gnHarvesteroaipmh = {
               },
               "xslfilter": [],
               "url": "",
-              "icon" : "blank.png"
+              "icon" : "blank.png",
+              "useListRecords": true
             },
             "content":   {
               "validate": "NOVALIDATION",
@@ -60,6 +61,7 @@ var gnHarvesteroaipmh = {
                 + '    <name>' + h.site.name + '</name>'
                 + '    <url>' + h.site.url.replace(/&/g, '&amp;') + '</url>'
                 + '    <icon>' + h.site.icon + '</icon>'
+                + '    <useListRecords>' + h.site.useListRecords + '</useListRecords>'
                 + '    <xslfilter>'
                 + (h.site.xslfilter[0] ? h.site.xslfilter.replace(/&/g, '&amp;') : '')
                 + '    </xslfilter>'

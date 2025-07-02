@@ -24,7 +24,9 @@
 package org.fao.geonet.kernel.harvest.harvester.oaipmh;
 
 import org.fao.geonet.domain.ISODate;
+import org.fao.geonet.utils.Xml;
 import org.fao.oaipmh.responses.Header;
+import org.fao.oaipmh.responses.Record;
 
 //=============================================================================
 
@@ -48,10 +50,19 @@ public class RecordInfo {
     public String prefix;
 
     //---------------------------------------------------------------------------
+    public String xml;
 
+    //---------------------------------------------------------------------------
     public RecordInfo(Header h, String mdPrefix) {
         id = h.getIdentifier();
         changeDate = h.getDateStamp();
+        prefix = mdPrefix;
+    }
+
+    public RecordInfo(Record h, String mdPrefix) {
+        id = h.getHeader().getIdentifier();
+        changeDate = h.getHeader().getDateStamp();
+        xml = Xml.getString(h.getMetadata());
         prefix = mdPrefix;
     }
 
